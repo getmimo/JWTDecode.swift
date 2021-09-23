@@ -14,92 +14,132 @@ executors:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
       FL_OUTPUT_DIR: output
+      FASTLANE_EXPLICIT_OPEN_SIMULATOR: 2
 
 commands:
   prepare:
     parameters:
       ruby:
         type: string
-        default: "2.7.1p83"
+        default: "2.7.4p191"
       xcode:
         type: string
-        default: "11.7.0"
+        default: "13.0.0"
     steps:
       - restore_cache:
           keys:
           - jwtdecode-swift-gems-{{ checksum "Gemfile.lock" }}
           - jwtdecode-swift-gems-
-      - run: |
-          echo "ruby-<< parameters.ruby >>" > ~/.ruby-version
-          bundle check || bundle install --without=development
+      - run:
+          name: Install gems
+          command: |
+            echo "ruby-<< parameters.ruby >>" > ~/.ruby-version
+            bundle check || bundle install --without=development
       - save_cache:
           key: jwtdecode-swift-gems-{{ checksum "Gemfile.lock" }}
           paths:
             - vendor/bundle
-      - run: |
-          brew install swiftlint
-          grep -lR "shouldUseLaunchSchemeArgsEnv" *.* --null | xargs -0 sed -i '' -e 's/shouldUseLaunchSchemeArgsEnv = "YES"/shouldUseLaunchSchemeArgsEnv = "YES" codeCoverageEnabled = "YES"/g'
+      - run:
+          name: Install Carthage
+          command: brew update && brew upgrade carthage
+      - run:
+          name: Install Swiftlint
+          command: brew install swiftlint
+      - run:
+          name: Enable code coverage
+          command: grep -lR "shouldUseLaunchSchemeArgsEnv" *.* --null | xargs -0 sed -i '' -e 's/shouldUseLaunchSchemeArgsEnv = "YES"/shouldUseLaunchSchemeArgsEnv = "YES" codeCoverageEnabled = "YES"/g'
       - restore_cache:
           keys:
             - jwtdecode-swift-carthage-{ checksum "Cartfile.resolved" }}-<< parameters.xcode >>
             - jwtdecode-swift-carthage-{ checksum "Cartfile.resolved" }}
             - jwtdecode-swift-carthage-
-      - run: carthage bootstrap --no-use-binaries --cache-builds
+      - command: 
+          name: Install dependencies
+          command: carthage bootstrap --use-xcframeworks --no-use-binaries --cache-builds
       - save_cache:
           key: jwtdecode-swift-carthage-{ checksum "Cartfile.resolved" }}-<< parameters.xcode >>
           paths:
             - Carthage/Build
   test-ios:
-    steps: 
-      - run: bundle exec fastlane ios ci
+    steps:
+      - run: 
+          name: Run iOS tests
+          command: bundle exec fastlane ios ci
   pod-lint:
     steps:
-      - run: bundle exec fastlane ios pod_lint
-  send-coverage-report:
+      - run: 
+          name: Run pod lib lint
+          command: bundle exec fastlane ios pod_lint
+  upload-coverage:
     steps:
-      - run: bash <(curl -s https://codecov.io/bash) -J 'JWTDecode'
+      - run: 
+          name: Upload coverage report
+          command: bash <(curl -s https://codecov.io/bash) -J 'JWTDecode'
   test-macos:
     steps: 
-      - run: |
-          security create-keychain -p circle cikeychain
-          security list-keychains -d user -s "/Users/distiller/Library/Keychains/xcode.keychain-db" /Users/distiller/Library/Keychains/cikeychain-db
-          security default-keychain -s /Users/distiller/Library/Keychains/cikeychain-db
-          security unlock-keychain -p circle "/Users/distiller/Library/Keychains/cikeychain-db"
-          xcodebuild test -scheme JWTDecode-OSX -destination 'platform=macOS,arch=x86_64' | xcpretty
-          swift test
+      - run: 
+          name: Run macOS tests
+          command: |
+            security create-keychain -p circle cikeychain
+            security list-keychains -d user -s "/Users/distiller/Library/Keychains/xcode.keychain-db" /Users/distiller/Library/Keychains/cikeychain-db
+            security default-keychain -s /Users/distiller/Library/Keychains/cikeychain-db
+            security unlock-keychain -p circle "/Users/distiller/Library/Keychains/cikeychain-db"
+            xcodebuild test -scheme JWTDecode-OSX -destination 'platform=macOS,arch=x86_64' | xcpretty
+            swift test
   test-tvos:
     steps: 
-      - run: xcodebuild test -scheme JWTDecode-tvOS -destination 'platform=tvOS Simulator,name=Apple TV' | xcpretty
+      - run: 
+          name: Run tvOS tests
+          command: xcodebuild test -scheme JWTDecode-tvOS -destination 'platform=tvOS Simulator,name=Apple TV' | xcpretty
 
 jobs:
-  build-and-test-iOS-swift-5_2:
+  build-and-test-iOS-xcode-13:
     executor: job-environment
-    environment:
-      FASTLANE_EXPLICIT_OPEN_SIMULATOR: 2
-    macos:
-      xcode: 11.7.0
     steps:
       - checkout
       - prepare
       - test-ios
-      - send-coverage-report
+      - upload-coverage
       - pod-lint
       - store_test_results:
           path: output/scan
       - store_artifacts:
           path: output
-  build-and-test-macOS-swift-5_2:
+  build-and-test-macOS-xcode-13:
     executor: job-environment
-    macos:
-      xcode: 11.7.0
     steps:
       - checkout
       - prepare
       - test-macos
-  build-and-test-tvOS-swift-5_2:
+  build-and-test-tvOS-xcode-13:
+    executor: job-environment
+    steps:
+      - checkout
+      - prepare
+      - test-tvos
+  build-and-test-iOS-xcode-12:
     executor: job-environment
     macos:
-      xcode: 11.7.0
+      xcode: "12.5.1"
+      ruby: "2.7.4p191"
+    steps:
+      - checkout
+      - prepare
+      - test-ios
+  build-and-test-macOS-xcode-12:
+    executor: job-environment
+    macos:
+      xcode: "12.5.1"
+      ruby: "2.7.4p191"
+    steps:
+      - checkout
+      - prepare
+      - test-macos
+  build-and-test-tvOS-xcode-12:
+    executor: job-environment
+    macos:
+      xcode: "12.5.1"
+      ruby: "2.7.4p191"
     steps:
       - checkout
       - prepare
@@ -108,6 +148,9 @@ jobs:
 workflows:
   build:
     jobs:
-      -  build-and-test-iOS-swift-5_2
-      -  build-and-test-macOS-swift-5_2
-      -  build-and-test-tvOS-swift-5_2
+      -  build-and-test-iOS-xcode-13
+      -  build-and-test-macOS-xcode-13
+      -  build-and-test-tvOS-xcode-13
+      -  build-and-test-iOS-xcode-12
+      -  build-and-test-macOS-xcode-12
+      -  build-and-test-tvOS-xcode-12
